@@ -8,7 +8,6 @@ results/
 wandb/
 local/
 slurm*
-pretrained_models/
 lightning_logs/
 .ipynb_checkpoints/
 .vscode/
