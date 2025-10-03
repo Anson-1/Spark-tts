@@ -1,0 +1,104 @@
+#===========================|  Dataset Configuration |==========================#
+datasets:
+  _target_: sparkvox.models.base.dataloaders.base_datamodule_pl.BaseDataModule
+  _recursive_: false
+  jsonlfiles:
+    train: /aifs4su/mmdata/processed_data/spark-tts/AGE_DATA/split.train.ai.jsonl
+    val: /aifs4su/mmdata/processed_data/spark-tts/GENDER_DATA/test.AISHELL-3.age.gender.accent.speaker.text.reindex.duration.jsonl
+
+
+  sample_rate: 16000 
+  audio_duration: 6  # (s)  
+
+  dataloader:
+    _target_: sparkvox.models.speaker_attribute.age.dataloaders.wav_age_dataset.AgeDataset
+    batch_size: 32
+    val_batch_size: 32
+    num_workers: 8
+
+
+#===========================|  Model Configuration |============================#
+model:
+  _target_: sparkvox.models.speaker_attribute.age.lightning_models.mel_age_predictor.AgePredictor
+  _recursive_: false
+  checkpoint: null    
+  ignore_keys: []
+  
+  mel:
+    sample_rate: 16000
+    n_fft: 1024
+    win_length: 640
+    hop_length: 320
+    mel_fmin: 10 
+    mel_fmax: null
+    num_mels: 128
+
+  predictor:
+    _target_: sparkvox.models.speaker_attribute.base.modules.ecapa_tdnn.ECAPA_TDNN
+    channels: 512
+    feat_dim: 128
+    embed_dim: 5
+    
+  loss_lambdas:
+    ce_loss: 1.0
+
+  # optimizer
+  grad_clip: 1.0
+  optimizer:
+    _target_: "torch.optim.AdamW"
+    lr: 1.0e-05
+    weight_decay: 1.0e-6
+    betas: [0.9, 0.96]
+    eps: 1.0e-8
+  
+  lr_scheduler:
+    _target_: "sparkvox.utils.scheduler.WarmupAnnealSteps"
+    warmup_step: 1000
+    anneal_steps: [400000]
+    anneal_rate: 0.5
+    final_lr: null
+
+#===========================| Trainer Configuration |============================#
+train:
+  trainer:
+    devices: 1                           # GPU number, -1 indicates all available GPUs
+    num_nodes: 1
+    max_epochs: 100000
+    max_steps: 500000       
+    val_check_interval: 200              #  Set the int number for iteratons, or an float 0.2 to check 5 times per epoch.
+    log_every_n_steps: 100 
+    # num_sanity_val_steps: 2
+    accelerator: gpu
+    strategy: ddp
+    precision: 32                         # [32, 16-mixed]
+    sync_batchnorm: true
+    enable_checkpointing: true
+    limit_val_batches: 1.0
+    accumulate_grad_batches: 1
+    strategy_params:
+      find_unused_parameters: true
+  
+  logger:
+    _target_: lightning.pytorch.loggers.TensorBoardLogger
+    save_dir: "tensorboard/"
+    name: "" # If it is the empty string then no per-experiment subdirectory is used.
+    version: null
+    log_graph: False
+    default_hp_metric: False
+    prefix: ""
+  
+  callbacks:
+    model_checkpoint:
+      _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      dirpath: 
+      monitor: "val_acc"           # used to determine which checkpoint will be saved
+      mode: "max"              # according to the monitor value, choices=['min', 'max']
+      save_top_k: 1            # tok-k best checkpoints will be saved based on monitor and mode
+      save_last: True          # always save the last checkpoint
+      verbose: true
+      every_n_train_steps: 500
+      filename: "{epoch:04d}_{step:06d}_{val_acc:.2f}"
+    
+    lr_monitor:
+      _target_: pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: "step"

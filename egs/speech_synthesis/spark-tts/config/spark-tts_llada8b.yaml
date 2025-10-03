@@ -1,0 +1,111 @@
+#===========================|  Dataset Configuration |==========================#
+datasets:
+  _target_: sparkvox.models.base.dataloaders.multi_datasetdict_pl.MultiDictData
+  _recursive_: false
+  task:
+    - tts
+    - control_tts
+
+  collator:
+    _target_: sparkvox.models.speech_synthesis.base.dataloaders.data_collator_for_lm.DataCollatorForCausalLM
+    tokenizer_path: pretrained_models/spark-tts-llada/tokenizer
+    mlm: false 
+    return_tensors: pt
+    max_length: 1500
+ 
+  dataloader:
+    #batch_size: 8
+    batch_size: 2
+    #val_batch_size: 8
+    val_batch_size: 8
+    num_workers: 8
+
+  data_paths:
+    train:
+      - local/sparktts/train_data_llada/m3ed
+    validation: 
+      - local/sparktts/train_data_llada/m3ed
+
+model:
+  _target_: sparkvox.models.speech_synthesis.sparktts.lightning_models.sparktts_llada.SparkTTS
+  _recursive_: false
+  checkpoint: null    
+  ignore_keys: []
+  log_interval: 500
+  pad_id: -100
+
+  llm:
+    _target_: sparkvox.models.speech_synthesis.sparktts.models.llada.LLaDA
+    model_name: pretrained_models/LLaDA_SMALL
+    token_num: 139843
+    tokenizer_path: pretrained_models/spark-tts-llada/tokenizer
+
+
+
+  grad_clip: 1.0
+  optimizer:
+    _target_: "torch.optim.AdamW"
+    lr: 0.001  # Set to the peak learning rate from the paper
+    weight_decay: 1.0e-6  # As specified in the paper
+    betas: [0.9, 0.996]
+    eps: 1.0e-8
+  
+  # lr_scheduler:
+  #   _target_: "transformers.get_wsd_schedule"
+  #   num_warmup_steps: 2000      # Phase 1: Warmup for 2k steps
+  #   num_stable_steps: 2000000   # Phase 2: Stable for 2M steps (1.2M + 0.8M from paper)
+  #   num_decay_steps: 300000     # Phase 3: Decay for 300k steps
+  #   min_lr_ratio: 0.025         # Final LR = 1e-5 (since 1e-5 / 4e-4 = 0.025)
+  lr_scheduler:
+    _target_: "sparkvox.utils.scheduler.WarmupAnnealSteps"
+    warmup_step: 5000
+    anneal_steps: [400000]
+    anneal_rate: 0.5
+    final_lr: 0.00001
+
+#===========================| Trainer Configuration |============================#
+train:
+  trainer:
+    devices: 1                           # Use only 1 GPU (the one specified by CUDA_VISIBLE_DEVICES)
+    num_nodes: 1
+    max_epochs: 1000                      # Keep as requested
+    max_steps: 5000000                     # Total steps: 2K warmup + 2M stable + 300K decay
+    val_check_interval: 1.0              #  Set the int number for iteratons, or an float 0.2 to check 5 times per epoch.
+    log_every_n_steps: 10 
+    # num_sanity_val_steps: 2
+    accelerator: gpu
+    strategy: auto  #ddp
+    precision: bf16-mixed                         # [32, 16-mixed, bf16-mixed]
+    sync_batchnorm: true
+    enable_checkpointing: true
+    limit_val_batches: 50
+    accumulate_grad_batches: 12            # Keep batch size effective = 1 * 12 = 12
+    strategy_params:
+      find_unused_parameters: false
+  
+  logger:
+    _target_: lightning.pytorch.loggers.TensorBoardLogger
+    save_dir: "tensorboard/"
+    name: "" # If it is the empty string then no per-experiment subdirectory is used.
+    version: null
+    log_graph: False
+    default_hp_metric: False
+    prefix: ""
+  
+  callbacks:
+    model_checkpoint:
+      # _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      _target_: sparkvox.utils.lighting_model_check.CustomModelCheckpoint
+      dirpath: 
+      monitor: "agg_val_loss"  # used to determine which checkpoint will be saved
+      mode: "min"              # according to the monitor value, choices=['min', 'max']
+      save_top_k: -1            # tok-k best checkpoints will be saved based on monitor and mode
+      save_last: True          # always save the last checkpoint
+      verbose: true
+      every_n_train_steps: 5000
+      save_on_train_epoch_end: true
+      filename: "{epoch:04d}_{step:06d}_{agg_val_loss:.2f}"
+    
+    lr_monitor:
+      _target_: pytorch_lightning.callbacks.LearningRateMonitor
+      logging_interval: "step"
